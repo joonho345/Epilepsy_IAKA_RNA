@@ -1,50 +1,48 @@
+# Gene-set enrichment of DEGs in the nine epileptogenesis-related categories (Fig. 3c,
+# Supplementary Data 3).
+# Revision 1 (Reviewer 1, Minor comment 5):
+#  - Background: all genes with a valid DESeq2 test (non-missing p-value) at each time point,
+#    taken from DESeq2_IAKA_vs_IASL_<day>_all.csv (05.DESeq/DESeq.R).
+#  - DEGs: padj < 0.05 and |log2FC| > 1 (Direction column from DESeq.R).
+#  - Combined analysis: genes in more than one category are counted once.
+#  - Two-sided Fisher's exact tests, Benjamini-Hochberg adjustment within each table.
 library(dplyr)
 
 BASE_DIR       <- "/path/to/project"      # SET THIS
 GENESET_SCRIPT <- "/path/to/Geneset.R"    # SET THIS
+source(GENESET_SCRIPT)                     # provides M_gene_sets (list of 9 categories)
 
-source(GENESET_SCRIPT)
-
-tpm_dir   <- file.path(BASE_DIR, "03.Normalization")
 deseq_dir <- file.path(BASE_DIR, "05.DESeq")
 out_dir   <- file.path(BASE_DIR, "06.EpilepsyGeneSet")
 dir.create(out_dir, showWarnings = FALSE)
 
-tpm <- as.matrix(read.table(file.path(tpm_dir, "merged_matrix_TPM.txt"),
-                              sep = "\t", header = TRUE, row.names = 1,
-                              check.names = FALSE))
-bg  <- rownames(tpm)[rowSums(tpm > 0) >= 1]
+union_set <- unique(unlist(M_gene_sets))
+fisher_row <- function(deg, set, bg) {
+  set <- intersect(set, bg); a <- length(intersect(deg, set))
+  mat <- matrix(c(a, length(deg) - a, length(set) - a,
+                  length(bg) - length(set) - length(deg) + a), 2)
+  ft  <- fisher.test(mat)
+  data.frame(background = length(bg), set_in_background = length(set),
+             pct_background = 100 * length(set) / length(bg), n_DEG = length(deg),
+             DEG_in_set = a, pct_DEG = 100 * a / length(deg),
+             odds_ratio = unname(ft$estimate), p = ft$p.value)
+}
 
-degs <- bind_rows(lapply(c("Day3","Day7","Day14"), function(d)
-  read.csv(file.path(deseq_dir, paste0("DEG_IAKA_vs_IASL_", d, ".csv"))) %>%
-    filter(padj < 0.05) %>%
-    mutate(Day = d, Direction = ifelse(log2FoldChange > 0, "Up", "Down"))))
-
-# Fisher's exact test: 9 categories x 3 phases x 2 directions
-enrich_df <- bind_rows(lapply(c("Day3","Day7","Day14"), function(day)
-  bind_rows(lapply(c("Up","Down"), function(dir) {
-    deg_sub <- intersect(degs$gene[degs$Day == day & degs$Direction == dir], bg)
-    n_bg <- length(bg); n_deg <- length(deg_sub)
-    bind_rows(lapply(names(M_gene_sets), function(cat) {
-      cg <- intersect(M_gene_sets[[cat]], bg); a <- length(intersect(deg_sub, cg))
-      mat <- matrix(c(a, n_deg - a, length(cg) - a,
-                      n_bg - a - (length(cg) - a) - (n_deg - a)), 2)
-      data.frame(Day = day, Direction = dir, Category = cat, n_overlap = a,
-                 fold_enrich = if (length(cg) > 0 && n_deg > 0)
-                   (a / length(cg)) / (n_deg / n_bg) else NA,
-                 pval = fisher.test(mat)$p.value)
-    }))
-  }))))
-
-enrich_df$padj <- p.adjust(enrich_df$pval, method = "BH")
-write.csv(enrich_df[order(enrich_df$Day, enrich_df$Direction, enrich_df$padj), ],
-          file.path(out_dir, "GeneSet_Enrichment.csv"), row.names = FALSE, quote = FALSE)
-
-coverage <- degs %>%
-  mutate(in_set = gene %in% M_gene_set_W) %>%
-  group_by(Day, Direction) %>%
-  summarise(total = n(), in_set = sum(in_set),
-            pct = round(100 * in_set / n(), 1), .groups = "drop")
-write.csv(coverage, file.path(out_dir, "GeneSet_Coverage.csv"),
-          row.names = FALSE, quote = FALSE)
-cat("Done: GeneSet_Enrichment.csv, GeneSet_Coverage.csv\n")
+union_rows <- list(); cat_rows <- list()
+for (day in c("Day3", "Day7", "Day14")) {
+  res <- read.csv(file.path(deseq_dir, paste0("DESeq2_IAKA_vs_IASL_", day, "_all.csv")))
+  bg  <- res$gene[!is.na(res$pvalue)]
+  for (dir in c("Up", "Down")) {
+    deg <- res$gene[res$Direction == dir]
+    union_rows[[length(union_rows) + 1]] <- cbind(Day = day, Direction = dir,
+                                                  fisher_row(deg, union_set, bg))
+    for (cat in names(M_gene_sets))
+      cat_rows[[length(cat_rows) + 1]] <- cbind(Day = day, Direction = dir, Category = cat,
+                                                fisher_row(deg, M_gene_sets[[cat]], bg))
+  }
+}
+union_df <- bind_rows(union_rows); union_df$padj_BH <- p.adjust(union_df$p, "BH")
+cat_df   <- bind_rows(cat_rows);   cat_df$padj_BH   <- p.adjust(cat_df$p, "BH")
+write.csv(union_df, file.path(out_dir, "GeneSet_Enrichment_combined.csv"), row.names = FALSE, quote = FALSE)
+write.csv(cat_df,   file.path(out_dir, "GeneSet_Enrichment_by_category.csv"), row.names = FALSE, quote = FALSE)
+cat("Done: GeneSet_Enrichment_combined.csv, GeneSet_Enrichment_by_category.csv\n")

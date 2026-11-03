@@ -20,10 +20,14 @@ load_data <- function(m, corrected = FALSE) {
   list(col = col[k, ], cnt = cnt[, k])
 }
 
-run_deseq2 <- function(cnt, col, groups, case_t, ctrl_t, label) {
+run_deseq2 <- function(cnt, col, groups, case_t, ctrl_t, label, block_batch = FALSE) {
   sel   <- rownames(col)[col$Group %in% groups]
   col_s <- col[sel, ]; col_s$Treatment <- factor(col_s$Treatment, c(ctrl_t, case_t))
-  dds   <- DESeqDataSetFromMatrix(cnt[, sel], col_s, ~ Treatment)
+  design <- ~ Treatment
+  if (block_batch && length(unique(col_s$Batch)) > 1) {   # IHKA: dataset as blocking factor
+    col_s$Batch <- factor(col_s$Batch); design <- ~ Batch + Treatment
+  }
+  dds   <- DESeqDataSetFromMatrix(cnt[, sel], col_s, design)
   n_min <- min(table(col_s$Treatment))
   dds   <- dds[rowSums(counts(dds) >= 10) >= max(2L, n_min %/% 2), ]
   dds   <- DESeq(dds, quiet = TRUE)
@@ -61,13 +65,15 @@ iaka_lfc <- list(
   IM = run_deseq2(iaka$cnt, iaka$col, c("IAKA_IM","IASL_IM"), "KA","Saline","IAKA_IM"),
   CR = run_deseq2(iaka$cnt, iaka$col, c("IAKA_CR","IASL_CR"), "KA","Saline","IAKA_CR"))
 
-ihka <- load_data("ihka", corrected = TRUE)
+# IHKA: raw counts, ~ Batch + Treatment (HA exists only in GSE99577, so ~ Treatment)
+ihka <- load_data("ihka", corrected = FALSE)
 ihka_lfc <- list(
-  HA = run_deseq2(ihka$cnt, ihka$col, c("IHKA_HA","IHSL_HA"), "KA","Saline","IHKA_HA"),
-  AC = run_deseq2(ihka$cnt, ihka$col, c("IHKA_AC","IHSL_AC"), "KA","Saline","IHKA_AC"),
-  IM = run_deseq2(ihka$cnt, ihka$col, c("IHKA_IM","IHSL_IM"), "KA","Saline","IHKA_IM"),
-  CR = run_deseq2(ihka$cnt, ihka$col, c("IHKA_CR","IHSL_CR"), "KA","Saline","IHKA_CR"))
+  HA = run_deseq2(ihka$cnt, ihka$col, c("IHKA_HA","IHSL_HA"), "KA","Saline","IHKA_HA", TRUE),
+  AC = run_deseq2(ihka$cnt, ihka$col, c("IHKA_AC","IHSL_AC"), "KA","Saline","IHKA_AC", TRUE),
+  IM = run_deseq2(ihka$cnt, ihka$col, c("IHKA_IM","IHSL_IM"), "KA","Saline","IHKA_IM", TRUE),
+  CR = run_deseq2(ihka$cnt, ihka$col, c("IHKA_CR","IHSL_CR"), "KA","Saline","IHKA_CR", TRUE))
 
+# PILO: ComBat-seq-corrected counts (Batch_correction.R)
 pilo <- load_data("pilo", corrected = TRUE)
 pilo_lfc <- list(
   HA = run_deseq2(pilo$cnt, pilo$col, c("PILO_HA","PSLC_HA","PSLC_GSE72402"), "PILO","Saline","PILO_HA"),
@@ -75,6 +81,8 @@ pilo_lfc <- list(
   IM = run_deseq2(pilo$cnt, pilo$col, c("PILO_IM","PSLC_GSE72402"),           "PILO","Saline","PILO_IM"),
   CR = run_deseq2(pilo$cnt, pilo$col, c("PILO_CR","PSLC_GSE72402"),           "PILO","Saline","PILO_CR"))
 
+# Note: permutation p = 0 means that none of the N_PERM permuted correlations reached the
+# observed value, i.e. p < 1/N_PERM.
 # ── Pearson r (whole transcriptome) ───────────────────────────────────────────
 cor_all <- bind_rows(cor_table(iaka_lfc, ihka_lfc, "IHKA"),
                      cor_table(iaka_lfc, pilo_lfc, "PILO"))

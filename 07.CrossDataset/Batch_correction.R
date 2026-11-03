@@ -15,22 +15,15 @@ load_model <- function(m) {
   list(col = col[k, ], cnt = cnt[, k])
 }
 
-save_counts <- function(cnt, label)
-  write.table(cnt, file.path(out_dir, paste0("counts_corrected_", label, ".txt")),
-              sep = "\t", quote = FALSE)
-
-# IAKA — single batch, no correction
-iaka <- load_model("iaka")
-save_counts(iaka$cnt, "iaka")
-
-# IHKA — 2 batches (GSE99577, GSE213393), Treatment as protected covariate
-ihka <- load_model("ihka")
-save_counts(ComBat_seq(ihka$cnt, ihka$col$Batch,
-                        model.matrix(~ ihka$col$Treatment)[, -1, drop = FALSE]), "ihka")
-
-# PILO — 4 batches, Treatment as protected covariate
+# Revision 1:
+#  - IAKA: single sequencing batch, no correction.
+#  - IHKA: no count-level correction. Both datasets contain kainate and saline animals
+#          in every phase they cover, so dataset is blocked in the DESeq2 design instead
+#          (DEG_Correlation.R). Sample labels follow the GEO records (coldata/coldata_ihka.txt).
+#  - PILO: cases and controls of some phases come from different datasets, so count-level
+#          batch effects are corrected with ComBat-seq, with treatment as a protected covariate.
 pilo <- load_model("pilo")
-save_counts(ComBat_seq(pilo$cnt, pilo$col$Batch,
-                        model.matrix(~ pilo$col$Treatment)[, -1, drop = FALSE]), "pilo")
-
-cat("Done: counts_corrected_iaka/ihka/pilo.txt\n")
+write.table(ComBat_seq(pilo$cnt, pilo$col$Batch,
+                       model.matrix(~ pilo$col$Treatment)[, -1, drop = FALSE]),
+            file.path(out_dir, "counts_corrected_pilo.txt"), sep = "\t", quote = FALSE)
+cat("Done: counts_corrected_pilo.txt\n")
